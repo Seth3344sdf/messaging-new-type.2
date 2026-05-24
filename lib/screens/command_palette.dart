@@ -345,10 +345,13 @@ class _CommandPaletteState extends State<CommandPalette> {
           }
           return;
         }
-        final c = app.createOneOnOne(id);
-        Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => ChatDetailScreen(conversationId: c.id),
-        ));
+        () async {
+          final c = await app.createOneOnOne(id);
+          if (!context.mounted) return;
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => ChatDetailScreen(conversationId: c.id),
+          ));
+        }();
         break;
       case _ResultType.message:
         Navigator.of(context).push(MaterialPageRoute(

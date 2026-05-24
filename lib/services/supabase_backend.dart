@@ -65,6 +65,54 @@ class SupabaseBackend implements Backend {
     await _client.from('profiles').update(payload).eq('id', uid);
   }
 
+  @override
+  Future<bool> isOnboarded() async {
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return false;
+    final row = await _client
+        .from('profiles')
+        .select('onboarded')
+        .eq('id', uid)
+        .maybeSingle();
+    return (row?['onboarded'] as bool?) ?? false;
+  }
+
+  @override
+  Future<void> markOnboarded() async {
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return;
+    await _client.from('profiles').update({'onboarded': true}).eq('id', uid);
+  }
+
+  @override
+  Future<List<AppUser>> listUsers() async {
+    final rows = await _client
+        .from('profiles')
+        .select('id, name, status, initials, avatar_tone, last_seen_at')
+        .order('name');
+    return rows.map<AppUser>((r) {
+      final lastSeen = r['last_seen_at'] == null
+          ? null
+          : DateTime.parse(r['last_seen_at'] as String);
+      final presence = _presenceFromLastSeen(lastSeen);
+      return AppUser(
+        id: r['id'] as String,
+        name: r['name'] as String,
+        avatarId: 'u:${r['id']}',
+        presence: presence,
+        status: r['status'] as String?,
+      );
+    }).toList();
+  }
+
+  Presence _presenceFromLastSeen(DateTime? t) {
+    if (t == null) return Presence.offline;
+    final age = DateTime.now().toUtc().difference(t.toUtc());
+    if (age.inMinutes < 2) return Presence.online;
+    if (age.inMinutes < 10) return Presence.idle;
+    return Presence.offline;
+  }
+
   // ── Conversations ─────────────────────────────────────────────────────────
   @override
   Future<List<Conversation>> listConversations() async {
@@ -248,6 +296,32 @@ class SupabaseBackend implements Backend {
           callback: (payload) {
             final row = payload.newRecord;
             controller.add(_messageFromRow(row));
+          },
+        )
+        .subscribe();
+    controller.onCancel = () => _client.removeChannel(channel);
+    return controller.stream;
+  }
+
+  @override
+  Stream<model.Message> subscribeAllMessages({
+    required List<String> conversationIds,
+  }) {
+    // One global channel; we filter client-side. Cheaper than N channels.
+    final controller = StreamController<model.Message>();
+    final allowed = conversationIds.toSet();
+    final channel = _client
+        .channel('messages:all-for-user')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'messages',
+          callback: (payload) {
+            final row = payload.newRecord;
+            final convId = row['conversation_id'] as String?;
+            if (convId != null && allowed.contains(convId)) {
+              controller.add(_messageFromRow(row));
+            }
           },
         )
         .subscribe();

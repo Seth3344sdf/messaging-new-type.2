@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../data/avatar_library.dart';
@@ -5,29 +7,45 @@ import '../data/mock_data.dart';
 import '../models/conversation.dart';
 import '../models/message.dart';
 import '../models/user.dart';
+import '../services/backend.dart';
 
+/// Holds local UI state + an in-memory cache of conversations and messages.
+///
+/// Two operating modes:
+///   - **Mock mode** ([backend] is null) — bootstraps from `MockData` and
+///     mutations stay local. Used for the no-backend demo.
+///   - **Live mode** ([backend] is non-null) — bootstrap pulls real
+///     conversations from Supabase, subscribes to live message inserts, and
+///     every mutation does an optimistic local update + a fire-and-forget
+///     write through [backend].
+///
+/// Screens read from this cache synchronously; they don't need to know which
+/// mode is active.
 class AppState extends ChangeNotifier {
-  // Launch state — both true by default so the app opens straight to the
-  // chats list, no splash or promise screen.
+  AppState({Backend? backend}) : _backend = backend;
+
+  final Backend? _backend;
+
+  // ── Launch state ──────────────────────────────────────────────────────────
   bool didSplash = true;
   bool didWelcome = true;
+  bool ready = false; // true once the initial fetch completes
+  bool needsOnboarding = false;
 
-  // Prefs (UI only)
+  // ── Prefs (UI only) ───────────────────────────────────────────────────────
   bool darkMode = false;
   bool notifications = true;
   bool doNotDisturb = false;
   bool readReceipts = true;
 
-  // Identity
+  // ── Identity ──────────────────────────────────────────────────────────────
   late AppUser me;
   String workingOn = 'figuring it out';
 
-  // Data
+  // ── Data ──────────────────────────────────────────────────────────────────
   late List<AppUser> users;
   late List<Conversation> conversations;
 
-  // Avatar registry keyed by avatarId. Every user has one. Groups can have
-  // their own (initials derived from the group name).
   final Map<String, AvatarSpec> avatarLookup = {};
 
   AppUser pulse = AppUser(
@@ -39,29 +57,39 @@ class AppState extends ChangeNotifier {
     isAi: true,
   );
 
-  void bootstrap() {
-    avatarLookup.clear();
+  // ── Live mode bookkeeping ────────────────────────────────────────────────
+  StreamSubscription<Message>? _messagesSub;
 
-    // Register pulse with an ink-tone "P" so it reads as distinct.
+  // ── Bootstrap ────────────────────────────────────────────────────────────
+  Future<void> bootstrap() async {
+    // Always register Pulse's avatar.
     avatarLookup['ai:pulse'] = AvatarLibrary.custom(
       id: 'ai:pulse',
       initials: 'P',
       tone: PaperTone.ink,
     );
 
+    if (_backend != null && _backend.currentUser != null) {
+      await _bootstrapFromBackend();
+    } else {
+      _bootstrapFromMock();
+    }
+    ready = true;
+    notifyListeners();
+  }
+
+  void _bootstrapFromMock() {
     final seeded = MockData.build(pulse: pulse);
     me = seeded.me;
     users = seeded.users;
     conversations = seeded.conversations;
 
-    // Register every user's avatar from their name + id.
     avatarLookup[me.avatarId] =
         AvatarLibrary.forUser(userId: me.id, name: me.name);
     for (final u in users) {
       avatarLookup[u.avatarId] =
           AvatarLibrary.forUser(userId: u.id, name: u.name);
     }
-    // Group avatars seeded by mock data.
     for (final c in conversations) {
       if (c.isGroup &&
           c.groupAvatarId != null &&
@@ -73,20 +101,78 @@ class AppState extends ChangeNotifier {
         );
       }
     }
-
   }
 
-  void completeSplash() {
-    didSplash = true;
+  Future<void> _bootstrapFromBackend() async {
+    final b = _backend!;
+    me = b.currentUser!;
+    avatarLookup[me.avatarId] =
+        AvatarLibrary.forUser(userId: me.id, name: me.name);
+
+    // Pull everything in parallel.
+    final results = await Future.wait([
+      b.listConversations(),
+      b.listUsers(),
+    ]);
+    conversations = results[0] as List<Conversation>;
+    users = (results[1] as List<AppUser>)
+        .where((u) => u.id != me.id)
+        .toList(growable: true);
+
+    for (final u in users) {
+      avatarLookup[u.avatarId] =
+          AvatarLibrary.forUser(userId: u.id, name: u.name);
+    }
+    for (final c in conversations) {
+      if (c.isGroup && c.groupAvatarId != null) {
+        avatarLookup[c.groupAvatarId!] = AvatarLibrary.custom(
+          id: c.groupAvatarId!,
+          initials: AvatarLibrary.initialsFrom(c.groupName ?? '··'),
+          tone: AvatarLibrary.toneFor(c.id),
+        );
+      }
+    }
+
+    needsOnboarding = !(await b.isOnboarded());
+
+    // Live: one subscription that fans new messages into the right convo.
+    _messagesSub?.cancel();
+    _messagesSub = b.subscribeAllMessages(
+      conversationIds: conversations.map((c) => c.id).toList(),
+    ).listen(_handleIncomingMessage);
+  }
+
+  void finishOnboarding() {
+    needsOnboarding = false;
+    notifyListeners();
+    unawaited(_backend?.markOnboarded());
+  }
+
+  void _handleIncomingMessage(Message m) {
+    final convo = conversations.where((c) => true).firstWhere(
+          (c) =>
+              c.participantIds.contains(m.authorId) ||
+              c.messages.any((existing) => existing.id == m.id),
+          orElse: () => Conversation(
+            id: '__none__',
+            participantIds: const [],
+            messages: const [],
+          ),
+        );
+    if (convo.id == '__none__') return;
+    if (convo.messages.any((x) => x.id == m.id)) return;
+    convo.messages.add(m);
+    if (m.authorId != me.id) convo.unread += 1;
     notifyListeners();
   }
 
-  void completeWelcome() {
-    didWelcome = true;
-    notifyListeners();
+  @override
+  void dispose() {
+    _messagesSub?.cancel();
+    super.dispose();
   }
 
-  // Prefs
+  // ── Prefs ────────────────────────────────────────────────────────────────
   void toggleDarkMode(bool v) {
     darkMode = v;
     notifyListeners();
@@ -107,10 +193,9 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Profile
+  // ── Profile ─────────────────────────────────────────────────────────────
   void updateName(String name) {
     me = me.copyWith(name: name);
-    // Keep my initials in sync with my name unless they've been manually edited.
     final current = avatarLookup[me.avatarId];
     if (current != null) {
       avatarLookup[me.avatarId] = current.copyWith(
@@ -118,14 +203,18 @@ class AppState extends ChangeNotifier {
       );
     }
     notifyListeners();
+    unawaited(_backend?.updateProfile(
+      name: name,
+      initials: AvatarLibrary.initialsFrom(name),
+    ));
   }
 
   void updateWorkingOn(String value) {
     workingOn = value;
     notifyListeners();
+    unawaited(_backend?.updateProfile(status: value));
   }
 
-  /// Update the current user's avatar: new initials, new tone, or both.
   void updateMyAvatar({String? initials, PaperTone? tone}) {
     final current = avatarLookup[me.avatarId];
     if (current == null) return;
@@ -134,11 +223,12 @@ class AppState extends ChangeNotifier {
       tone: tone,
     );
     notifyListeners();
+    unawaited(_backend?.updateProfile(initials: initials?.toUpperCase()));
   }
 
   AvatarSpec? specFor(String avatarId) => avatarLookup[avatarId];
 
-  // Conversations
+  // ── Conversations ────────────────────────────────────────────────────────
   List<Conversation> get directChats =>
       conversations.where((c) => !c.isGroup && !c.archived).toList();
 
@@ -158,25 +248,73 @@ class AppState extends ChangeNotifier {
     final c = conversations.firstWhere((c) => c.id == id);
     c.muted = !c.muted;
     notifyListeners();
+    unawaited(_backend?.setMute(id, c.muted));
   }
 
   void archiveConversation(String id) {
     final c = conversations.firstWhere((c) => c.id == id);
     c.archived = !c.archived;
     notifyListeners();
+    unawaited(_backend?.setArchived(id, c.archived));
   }
 
-  void sendMessage(String conversationId, String text, {String? replyToId}) {
+  Future<void> sendMessage(String conversationId, String text,
+      {String? replyToId}) async {
     final c = conversations.firstWhere((c) => c.id == conversationId);
-    c.messages.add(Message(
-      id: 'm_${DateTime.now().microsecondsSinceEpoch}',
+    final localId = 'm_${DateTime.now().microsecondsSinceEpoch}';
+    final optimistic = Message(
+      id: localId,
       authorId: me.id,
       text: text,
       sentAt: DateTime.now(),
       read: false,
       replyToId: replyToId,
-    ));
+    );
+    c.messages.add(optimistic);
     notifyListeners();
+
+    if (_backend == null) return;
+    try {
+      final real = await _backend.sendMessage(
+        conversationId,
+        text,
+        replyToId: replyToId,
+      );
+      // Swap the optimistic placeholder for the real id.
+      final idx = c.messages.indexWhere((m) => m.id == localId);
+      if (idx >= 0) c.messages[idx] = real;
+      notifyListeners();
+    } catch (e) {
+      // Leave the optimistic message; mark as not-read so it stays visible.
+      // ignore: avoid_print
+      print('[backend] sendMessage failed: $e');
+    }
+  }
+
+  void toggleReaction(Message m, Reaction r) {
+    if (m.reactions.contains(r)) {
+      m.reactions.remove(r);
+    } else {
+      m.reactions.add(r);
+    }
+    notifyListeners();
+    unawaited(_backend?.toggleReaction(m.id, r));
+  }
+
+  void togglePin(Message m) {
+    m.pinned = !m.pinned;
+    notifyListeners();
+    unawaited(_backend?.togglePin(m.id, m.pinned));
+  }
+
+  void notifyListenersPublic() => notifyListeners();
+
+  List<Message> pinnedDecisions(String conversationId) {
+    final c = conversations.firstWhere(
+      (c) => c.id == conversationId,
+      orElse: () => conversations.first,
+    );
+    return c.messages.where((m) => m.pinned).toList();
   }
 
   Message? messageById(String conversationId, String messageId) {
@@ -190,30 +328,6 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
-  void toggleReaction(Message m, Reaction r) {
-    if (m.reactions.contains(r)) {
-      m.reactions.remove(r);
-    } else {
-      m.reactions.add(r);
-    }
-    notifyListeners();
-  }
-
-  void togglePin(Message m) {
-    m.pinned = !m.pinned;
-    notifyListeners();
-  }
-
-  void notifyListenersPublic() => notifyListeners();
-
-  List<Message> pinnedDecisions(String conversationId) {
-    final c = conversations.firstWhere(
-      (c) => c.id == conversationId,
-      orElse: () => conversations.first,
-    );
-    return c.messages.where((m) => m.pinned).toList();
-  }
-
   void markRead(String conversationId) {
     final c = conversations.firstWhere(
       (c) => c.id == conversationId,
@@ -224,22 +338,45 @@ class AppState extends ChangeNotifier {
       m.read = true;
     }
     notifyListeners();
+    unawaited(_backend?.markRead(conversationId));
   }
 
-  Conversation createGroup({
+  Future<Conversation> createGroup({
     required String name,
     required List<String> memberIds,
     PaperTone? tone,
-  }) {
-    final groupId = 'g_${DateTime.now().microsecondsSinceEpoch}';
-    final avatarId = 'gav:$groupId';
+  }) async {
+    final localId = 'g_${DateTime.now().microsecondsSinceEpoch}';
+    final avatarId = 'gav:$localId';
     avatarLookup[avatarId] = AvatarLibrary.custom(
       id: avatarId,
       initials: AvatarLibrary.initialsFrom(name),
-      tone: tone ?? AvatarLibrary.toneFor(groupId),
+      tone: tone ?? AvatarLibrary.toneFor(localId),
     );
+
+    if (_backend != null) {
+      try {
+        final remote = await _backend.createGroup(
+          name: name,
+          memberIds: memberIds,
+        );
+        avatarLookup[remote.groupAvatarId ?? avatarId] = AvatarLibrary.custom(
+          id: remote.groupAvatarId ?? avatarId,
+          initials: AvatarLibrary.initialsFrom(name),
+          tone: tone ?? AvatarLibrary.toneFor(remote.id),
+        );
+        conversations = [remote, ...conversations];
+        notifyListeners();
+        return remote;
+      } catch (e) {
+        // ignore: avoid_print
+        print('[backend] createGroup failed: $e');
+        rethrow;
+      }
+    }
+
     final convo = Conversation(
-      id: groupId,
+      id: localId,
       participantIds: [me.id, ...memberIds, pulse.id],
       messages: [
         Message(
@@ -259,7 +396,7 @@ class AppState extends ChangeNotifier {
     return convo;
   }
 
-  Conversation createOneOnOne(String otherUserId) {
+  Future<Conversation> createOneOnOne(String otherUserId) async {
     final existing = conversations.firstWhere(
       (c) =>
           !c.isGroup &&
@@ -272,6 +409,13 @@ class AppState extends ChangeNotifier {
       ),
     );
     if (existing.id != '__none__') return existing;
+
+    if (_backend != null) {
+      final remote = await _backend.createOneOnOne(otherUserId);
+      conversations = [remote, ...conversations];
+      notifyListeners();
+      return remote;
+    }
 
     final convo = Conversation(
       id: 'd_${DateTime.now().microsecondsSinceEpoch}',

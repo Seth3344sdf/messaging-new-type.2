@@ -242,11 +242,14 @@ class _UserPickerState extends State<_UserPicker> {
                     ),
                     title: Text(u.name, style: theme.textTheme.titleMedium),
                     subtitle: u.status != null ? Text(u.status!) : null,
-                    onTap: () {
-                      final c = context.read<AppState>().createOneOnOne(u.id);
+                    onTap: () async {
+                      final c =
+                          await context.read<AppState>().createOneOnOne(u.id);
+                      if (!context.mounted) return;
                       Navigator.of(context).pop();
                       Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => ChatDetailScreen(conversationId: c.id),
+                        builder: (_) =>
+                            ChatDetailScreen(conversationId: c.id),
                       ));
                     },
                   );
@@ -394,11 +397,13 @@ class _NewGroupSheetState extends State<_NewGroupSheet> {
                   label: 'Create',
                   onPressed: _selected.isEmpty || _name.text.trim().isEmpty
                       ? null
-                      : () {
-                          final c = context.read<AppState>().createGroup(
-                                name: _name.text.trim(),
-                                memberIds: _selected.toList(),
-                              );
+                      : () async {
+                          final c =
+                              await context.read<AppState>().createGroup(
+                                    name: _name.text.trim(),
+                                    memberIds: _selected.toList(),
+                                  );
+                          if (!context.mounted) return;
                           Navigator.of(context).pop();
                           Navigator.of(context).push(MaterialPageRoute(
                             builder: (_) =>
