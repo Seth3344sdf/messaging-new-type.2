@@ -74,6 +74,36 @@ class _ProfileTabState extends State<ProfileTab> {
             onSubmit: (v) => context.read<AppState>().updateWorkingOn(v),
             hint: 'what are you up to?',
           ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final preset in const [
+                ('In a meeting', '30m'),
+                ('Heads down', '2h'),
+                ('Out for lunch', '1h'),
+                ('Back tomorrow', '1d'),
+              ])
+                _StatusPreset(
+                  label: preset.$1,
+                  expiry: preset.$2,
+                  onTap: () {
+                    final v = '${preset.$1} · clears in ${preset.$2}';
+                    _status.text = v;
+                    context.read<AppState>().updateWorkingOn(v);
+                  },
+                ),
+              _StatusPreset(
+                label: 'Clear',
+                expiry: '',
+                onTap: () {
+                  _status.text = '';
+                  context.read<AppState>().updateWorkingOn('');
+                },
+              ),
+            ],
+          ),
           const SizedBox(height: 24),
           _Section(title: 'preferences', children: [
             _SwitchRow(
@@ -266,6 +296,56 @@ class _SwitchRow extends StatelessWidget {
             activeTrackColor: AppPalette.ink.withValues(alpha: 0.85),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _StatusPreset extends StatelessWidget {
+  final String label;
+  final String expiry;
+  final VoidCallback onTap;
+  const _StatusPreset({
+    required this.label,
+    required this.expiry,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: dark ? AppPalette.surfaceDark : AppPalette.surface,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: dark ? AppPalette.hairlineDark : AppPalette.hairline,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            if (expiry.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              Text(
+                expiry,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppPalette.inkLight,
+                    ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

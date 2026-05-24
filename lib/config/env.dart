@@ -15,6 +15,13 @@ class Env {
   static const supabaseAnonKey =
       String.fromEnvironment('SUPABASE_ANON_KEY', defaultValue: '');
 
+  static const sentryDsn =
+      String.fromEnvironment('SENTRY_DSN', defaultValue: '');
+  static const appVersion =
+      String.fromEnvironment('APP_VERSION', defaultValue: 'dev');
+
   static bool get hasBackend =>
       supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty;
+
+  static bool get hasSentry => sentryDsn.isNotEmpty;
 }

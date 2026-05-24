@@ -17,6 +17,7 @@ dependencies:
   supabase_flutter: ^2.12.4
   image_picker: ^1.2.2
   file_picker: ^11.0.2
+  sentry_flutter: ^8.14.2
 
 dev_dependencies:
   flutter_lints: ^4.0.0

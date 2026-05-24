@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide AuthState;
 
 import 'app.dart';
@@ -10,6 +11,17 @@ import 'state/app_state.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Sentry — off unless a DSN is configured.
+  if (Env.hasSentry) {
+    await SentryFlutter.init(
+      (options) {
+        options.dsn = Env.sentryDsn;
+        options.release = Env.appVersion;
+        options.tracesSampleRate = 0.2;
+      },
+    );
+  }
 
   Backend? backend;
   if (Env.hasBackend) {
@@ -46,13 +58,17 @@ Future<void> main() async {
     await appState.bootstrap();
   }
 
-  runApp(
-    MultiProvider(
-      providers: [
-        Provider<Backend?>.value(value: backend),
-        ChangeNotifierProvider<AppState>.value(value: appState),
-      ],
-      child: const MessagingApp(),
-    ),
+  final app = MultiProvider(
+    providers: [
+      Provider<Backend?>.value(value: backend),
+      ChangeNotifierProvider<AppState>.value(value: appState),
+    ],
+    child: const MessagingApp(),
   );
+
+  if (Env.hasSentry) {
+    runApp(SentryWidget(child: app));
+  } else {
+    runApp(app);
+  }
 }
