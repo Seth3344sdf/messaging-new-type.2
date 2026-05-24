@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'models/user.dart';
 import 'screens/command_palette.dart';
 import 'screens/home_shell.dart';
+import 'screens/sign_in_screen.dart';
+import 'services/backend.dart';
 import 'state/app_state.dart';
 import 'theme/theme.dart';
 
@@ -18,7 +21,7 @@ class MessagingApp extends StatelessWidget {
       theme: buildLightTheme(),
       darkTheme: buildDarkTheme(),
       themeMode: app.darkMode ? ThemeMode.dark : ThemeMode.light,
-      home: const HomeShell(),
+      home: const _Root(),
       builder: (context, child) {
         return MediaQuery(
           data: MediaQuery.of(context).copyWith(
@@ -29,6 +32,29 @@ class MessagingApp extends StatelessWidget {
           ),
           child: GlobalShortcuts(child: child!),
         );
+      },
+    );
+  }
+}
+
+/// Root gate. If a real [Backend] is configured we require auth; otherwise we
+/// drop straight into the mock-data demo shell.
+class _Root extends StatelessWidget {
+  const _Root();
+
+  @override
+  Widget build(BuildContext context) {
+    final backend = context.watch<Backend?>();
+    if (backend == null) {
+      return const HomeShell();
+    }
+    return StreamBuilder<AppUser?>(
+      stream: backend.authChanges,
+      initialData: backend.currentUser,
+      builder: (context, snapshot) {
+        final user = snapshot.data;
+        if (user == null) return const SignInScreen();
+        return const HomeShell();
       },
     );
   }
