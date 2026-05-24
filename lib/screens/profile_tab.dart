@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/workspace.dart';
+import '../services/backend.dart';
 import '../state/app_state.dart';
 import '../theme/colors.dart';
 import '../widgets/avatar.dart';
 import 'avatar_picker_screen.dart';
+import 'slack_import_screen.dart';
 
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
@@ -129,6 +132,23 @@ class _ProfileTabState extends State<ProfileTab> {
               icon: Icons.done_all_rounded,
               value: app.readReceipts,
               onChanged: app.toggleReadReceipts,
+            ),
+          ]),
+          const SizedBox(height: 16),
+          const _WorkspacesSection(),
+          const SizedBox(height: 16),
+          _Section(title: 'import', children: [
+            ListTile(
+              leading: const Icon(Icons.swap_horiz_rounded,
+                  color: AppPalette.inkMuted, size: 20),
+              title: const Text('Import from Slack'),
+              subtitle:
+                  const Text('Bring channels + recent history with you.'),
+              trailing: const Icon(Icons.chevron_right_rounded,
+                  color: AppPalette.inkLight),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SlackImportScreen()),
+              ),
             ),
           ]),
           const SizedBox(height: 16),
@@ -347,6 +367,146 @@ class _StatusPreset extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _WorkspacesSection extends StatefulWidget {
+  const _WorkspacesSection();
+  @override
+  State<_WorkspacesSection> createState() => _WorkspacesSectionState();
+}
+
+class _WorkspacesSectionState extends State<_WorkspacesSection> {
+  late Future<List<Workspace>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  Future<List<Workspace>> _load() async {
+    final backend = context.read<Backend?>();
+    if (backend == null) return const [];
+    return backend.listWorkspaces();
+  }
+
+  Future<void> _newWorkspace() async {
+    final backend = context.read<Backend?>();
+    if (backend == null) return;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        final c = TextEditingController();
+        return AlertDialog(
+          title: const Text('New workspace'),
+          content: TextField(
+            controller: c,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: 'Acme'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(c.text.trim()),
+              child: const Text('Create'),
+            ),
+          ],
+        );
+      },
+    );
+    if (name == null || name.isEmpty) return;
+    await backend.createWorkspace(name);
+    setState(() => _future = _load());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final backend = context.read<Backend?>();
+    if (backend == null) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          child: Row(
+            children: [
+              Text(
+                'workspaces',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: AppPalette.inkLight,
+                    ),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'New workspace',
+                icon: const Icon(Icons.add_rounded, size: 18),
+                onPressed: _newWorkspace,
+              ),
+            ],
+          ),
+        ),
+        FutureBuilder<List<Workspace>>(
+          future: _future,
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              );
+            }
+            final list = snapshot.data!;
+            if (list.isEmpty) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Text(
+                  'You are not in any workspace yet.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: AppPalette.inkMuted,
+                      ),
+                ),
+              );
+            }
+            return Column(
+              children: list
+                  .map((w) => ListTile(
+                        contentPadding:
+                            const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        leading: Container(
+                          width: 30,
+                          height: 30,
+                          decoration: BoxDecoration(
+                            color: AppPalette.brandSoft,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            w.name.isEmpty ? '·' : w.name[0].toUpperCase(),
+                            style: const TextStyle(
+                              color: AppPalette.brand,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        title: Text(w.name),
+                        subtitle: Text(
+                          w.slug,
+                          style: const TextStyle(color: AppPalette.inkLight),
+                        ),
+                      ))
+                  .toList(),
+            );
+          },
+        ),
+      ],
     );
   }
 }

@@ -16,6 +16,7 @@ import '../widgets/avatar.dart';
 import '../widgets/composer.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/presence_dot.dart';
+import 'group_settings_sheet.dart';
 import 'memory_sheet.dart';
 
 class ChatDetailScreen extends StatefulWidget {
@@ -247,11 +248,18 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             ),
             onPressed: _openMemory,
           ),
-          IconButton(
-            tooltip: 'info',
-            icon: const Icon(Icons.more_horiz_rounded),
-            onPressed: () {},
-          ),
+          if (convo.isGroup)
+            IconButton(
+              tooltip: 'Group settings',
+              icon: const Icon(Icons.more_horiz_rounded),
+              onPressed: () => GroupSettingsSheet.open(context, convo.id),
+            )
+          else
+            IconButton(
+              tooltip: 'info',
+              icon: const Icon(Icons.more_horiz_rounded),
+              onPressed: () {},
+            ),
         ],
       ),
       body: Column(

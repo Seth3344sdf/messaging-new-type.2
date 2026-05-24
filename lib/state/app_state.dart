@@ -79,6 +79,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Manual re-fetch used by pull-to-refresh + workspace-switch.
+  Future<void> refresh() async {
+    if (_backend == null || _backend.currentUser == null) return;
+    await _bootstrapFromBackend();
+    notifyListeners();
+  }
+
   void _bootstrapFromMock() {
     final seeded = MockData.build(pulse: pulse);
     me = seeded.me;
@@ -349,6 +356,46 @@ class AppState extends ChangeNotifier {
     }
     notifyListeners();
     unawaited(_backend?.markRead(conversationId));
+  }
+
+  Future<void> renameGroup(String conversationId, String name) async {
+    final c = conversations.firstWhere((c) => c.id == conversationId);
+    c.groupName = name;
+    final avId = c.groupAvatarId;
+    if (avId != null) {
+      final spec = avatarLookup[avId];
+      if (spec != null) {
+        avatarLookup[avId] = spec.copyWith(
+          initials: AvatarLibrary.initialsFrom(name),
+        );
+      }
+    }
+    notifyListeners();
+    unawaited(_backend?.renameGroup(conversationId, name));
+  }
+
+  Future<void> addGroupMembers(
+      String conversationId, List<String> userIds) async {
+    final c = conversations.firstWhere((c) => c.id == conversationId);
+    for (final id in userIds) {
+      if (!c.participantIds.contains(id)) c.participantIds.add(id);
+    }
+    notifyListeners();
+    unawaited(_backend?.addGroupMembers(conversationId, userIds));
+  }
+
+  Future<void> removeGroupMember(
+      String conversationId, String userId) async {
+    final c = conversations.firstWhere((c) => c.id == conversationId);
+    c.participantIds.remove(userId);
+    notifyListeners();
+    unawaited(_backend?.removeGroupMember(conversationId, userId));
+  }
+
+  Future<void> leaveGroup(String conversationId) async {
+    conversations.removeWhere((c) => c.id == conversationId);
+    notifyListeners();
+    unawaited(_backend?.leaveGroup(conversationId));
   }
 
   Future<Conversation> createGroup({

@@ -3,6 +3,7 @@ import 'dart:async';
 import '../models/conversation.dart';
 import '../models/message.dart';
 import '../models/user.dart';
+import '../models/workspace.dart';
 
 /// Backend abstraction. Both the live Supabase implementation and the local
 /// mock-data fallback implement this interface so the UI can be swapped over
@@ -16,6 +17,7 @@ abstract class Backend {
   Stream<AppUser?> get authChanges;
   AppUser? get currentUser;
   Future<void> signInWithMagicLink(String email);
+  Future<void> signInWithApple();
   Future<void> signOut();
 
   // ── Profiles ──────────────────────────────────────────────────────────────
@@ -25,6 +27,10 @@ abstract class Backend {
   /// Has the signed-in user finished onboarding?
   Future<bool> isOnboarded();
   Future<void> markOnboarded();
+
+  // ── Workspaces ────────────────────────────────────────────────────────────
+  Future<List<Workspace>> listWorkspaces();
+  Future<Workspace> createWorkspace(String name);
 
   /// Heartbeat — bumps profile.last_seen_at. Drives presence inference.
   Future<void> heartbeat();
@@ -46,6 +52,12 @@ abstract class Backend {
   Future<void> setMute(String conversationId, bool muted);
   Future<void> setArchived(String conversationId, bool archived);
   Future<void> markRead(String conversationId);
+
+  // ── Group management ─────────────────────────────────────────────────────
+  Future<void> renameGroup(String conversationId, String name);
+  Future<void> addGroupMembers(String conversationId, List<String> userIds);
+  Future<void> removeGroupMember(String conversationId, String userId);
+  Future<void> leaveGroup(String conversationId);
 
   // ── Messages ──────────────────────────────────────────────────────────────
   Future<List<Message>> listMessages(String conversationId, {int limit = 100});

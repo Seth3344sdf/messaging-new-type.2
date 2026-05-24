@@ -3,6 +3,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 
 import '../models/message.dart';
 import '../theme/colors.dart';
+import 'attachment_preview.dart';
 import 'avatar.dart';
 import 'message_text.dart';
 
@@ -112,6 +113,10 @@ class MessageBubble extends StatelessWidget {
               color: fromMe ? selfText : otherText,
               fromMe: fromMe,
             ),
+            ..._extractUrls(message.text).map((u) => Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: AttachmentPreview(url: u, fromMe: fromMe),
+                )),
             if (message.pinned)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -207,6 +212,16 @@ class MessageBubble extends StatelessWidget {
           ),
       ],
     );
+  }
+
+  static final _urlPattern =
+      RegExp(r'https?:\/\/[^\s]+', caseSensitive: false);
+
+  List<String> _extractUrls(String text) {
+    final matches = _urlPattern.allMatches(text).map((m) => m.group(0)!).toList();
+    // De-dupe but keep order.
+    final seen = <String>{};
+    return [for (final u in matches) if (seen.add(u)) u];
   }
 
   void _showReactionPicker(BuildContext context) {

@@ -130,9 +130,17 @@ class _ChatsTabState extends State<ChatsTab> {
             ),
           ),
           Expanded(
-            child: visible.isEmpty
-                ? _empty(theme)
-                : _buildGrouped(context, visible),
+            child: RefreshIndicator(
+              color: AppPalette.brand,
+              onRefresh: () => context.read<AppState>().refresh(),
+              child: visible.isEmpty
+                  ? ListView(
+                      // ListView so RefreshIndicator can still pull on empty state
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: [SizedBox(height: 200, child: _empty(theme))],
+                    )
+                  : _buildGrouped(context, visible),
+            ),
           ),
         ],
       ),
@@ -218,11 +226,34 @@ class _ChatsTabState extends State<ChatsTab> {
   Widget _empty(ThemeData theme) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Text(
-          'nothing here yet.\ntap + to start one.',
-          textAlign: TextAlign.center,
-          style: theme.textTheme.bodyLarge?.copyWith(color: AppPalette.inkLight),
+        padding: const EdgeInsets.symmetric(horizontal: 36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: AppPalette.brandSoft,
+                shape: BoxShape.circle,
+              ),
+              alignment: Alignment.center,
+              child: const Icon(Icons.chat_bubble_outline_rounded,
+                  color: AppPalette.brand, size: 24),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'Quiet in here.',
+              style: theme.textTheme.titleLarge,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Tap the + button to start your first chat, or press ⌘K to find someone.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: AppPalette.inkMuted, height: 1.45),
+            ),
+          ],
         ),
       ),
     );

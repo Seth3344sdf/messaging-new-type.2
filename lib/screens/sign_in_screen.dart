@@ -29,6 +29,26 @@ class _SignInScreenState extends State<SignInScreen> {
     super.dispose();
   }
 
+  Future<void> _appleSignIn() async {
+    final backend = context.read<Backend?>();
+    if (backend == null) return;
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+    try {
+      await backend.signInWithApple();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error =
+            'Apple sign-in failed. Configure the Apple provider in '
+            'Supabase → Authentication → Providers first.');
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
   Future<void> _send() async {
     final email = _email.text.trim();
     if (email.isEmpty || !email.contains('@')) {
@@ -103,6 +123,54 @@ class _SignInScreenState extends State<SignInScreen> {
                       child: PillButton(
                         label: _sending ? 'Sending…' : 'Send magic link',
                         onPressed: _sending ? null : _send,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Divider(
+                            color: dark
+                                ? AppPalette.hairlineDark
+                                : AppPalette.hairline,
+                          ),
+                        ),
+                        Padding(
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 10),
+                          child: Text('or',
+                              style: theme.textTheme.bodySmall),
+                        ),
+                        Expanded(
+                          child: Divider(
+                            color: dark
+                                ? AppPalette.hairlineDark
+                                : AppPalette.hairline,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _appleSignIn,
+                        icon: const Icon(Icons.apple, size: 20),
+                        label: const Text('Sign in with Apple'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor:
+                              dark ? AppPalette.inkOnDark : AppPalette.ink,
+                          side: BorderSide(
+                            color: dark
+                                ? AppPalette.hairlineDark
+                                : AppPalette.hairline,
+                          ),
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
                       ),
                     ),
                   ] else ...[

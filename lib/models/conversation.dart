@@ -5,7 +5,7 @@ class Conversation {
   final List<String> participantIds;
   final List<Message> messages;
   final bool isGroup;
-  final String? groupName;
+  String? groupName;
   final String? groupAvatarId;
   bool muted;
   bool archived;

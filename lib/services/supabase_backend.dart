@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart' hide Presence;
 import '../models/conversation.dart';
 import '../models/message.dart' as model;
 import '../models/user.dart';
+import '../models/workspace.dart';
 import 'backend.dart';
 
 /// Live backend backed by Supabase: Postgres for data, Realtime for live
@@ -49,6 +50,17 @@ class SupabaseBackend implements Backend {
   }
 
   @override
+  Future<void> signInWithApple() async {
+    // Requires "Apple" provider to be enabled in Supabase Studio →
+    // Authentication → Providers, with the service id, key, team id, etc.
+    // See BACKEND.md.
+    await _client.auth.signInWithOAuth(
+      OAuthProvider.apple,
+      redirectTo: null,
+    );
+  }
+
+  @override
   Future<void> signOut() => _client.auth.signOut();
 
   // ── Profiles ──────────────────────────────────────────────────────────────
@@ -84,6 +96,58 @@ class SupabaseBackend implements Backend {
     final uid = _client.auth.currentUser?.id;
     if (uid == null) return;
     await _client.from('profiles').update({'onboarded': true}).eq('id', uid);
+  }
+
+  @override
+  Future<List<Workspace>> listWorkspaces() async {
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return const [];
+    final memberships = await _client
+        .from('workspace_members')
+        .select('workspace_id')
+        .eq('user_id', uid);
+    if (memberships.isEmpty) return const [];
+    final ids = [for (final m in memberships) m['workspace_id'] as String];
+    final rows = await _client
+        .from('workspaces')
+        .select('id, name, slug')
+        .inFilter('id', ids)
+        .order('name');
+    return rows
+        .map<Workspace>((r) => Workspace(
+              id: r['id'] as String,
+              name: r['name'] as String,
+              slug: r['slug'] as String,
+            ))
+        .toList();
+  }
+
+  @override
+  Future<Workspace> createWorkspace(String name) async {
+    final uid = _requireUid();
+    final slug = name
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    final inserted = await _client
+        .from('workspaces')
+        .insert({
+          'name': name,
+          'slug': '$slug-${DateTime.now().millisecondsSinceEpoch}',
+          'created_by': uid,
+        })
+        .select('id, name, slug')
+        .single();
+    await _client.from('workspace_members').insert({
+      'workspace_id': inserted['id'],
+      'user_id': uid,
+      'role': 'owner',
+    });
+    return Workspace(
+      id: inserted['id'] as String,
+      name: inserted['name'] as String,
+      slug: inserted['slug'] as String,
+    );
   }
 
   @override
@@ -317,6 +381,43 @@ class SupabaseBackend implements Backend {
         .update({'archived': archived})
         .eq('conversation_id', conversationId)
         .eq('user_id', uid);
+  }
+
+  @override
+  Future<void> renameGroup(String conversationId, String name) async {
+    await _client
+        .from('conversations')
+        .update({'name': name}).eq('id', conversationId);
+  }
+
+  @override
+  Future<void> addGroupMembers(
+      String conversationId, List<String> userIds) async {
+    if (userIds.isEmpty) return;
+    final rows = userIds
+        .map((id) => {
+              'conversation_id': conversationId,
+              'user_id': id,
+              'role': 'member',
+            })
+        .toList();
+    await _client.from('conversation_members').insert(rows);
+  }
+
+  @override
+  Future<void> removeGroupMember(
+      String conversationId, String userId) async {
+    await _client
+        .from('conversation_members')
+        .delete()
+        .eq('conversation_id', conversationId)
+        .eq('user_id', userId);
+  }
+
+  @override
+  Future<void> leaveGroup(String conversationId) async {
+    final uid = _requireUid();
+    await removeGroupMember(conversationId, uid);
   }
 
   @override
