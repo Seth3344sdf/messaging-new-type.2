@@ -59,6 +59,7 @@ class AppState extends ChangeNotifier {
 
   // ── Live mode bookkeeping ────────────────────────────────────────────────
   StreamSubscription<Message>? _messagesSub;
+  Timer? _heartbeatTimer;
 
   // ── Bootstrap ────────────────────────────────────────────────────────────
   Future<void> bootstrap() async {
@@ -140,6 +141,14 @@ class AppState extends ChangeNotifier {
     _messagesSub = b.subscribeAllMessages(
       conversationIds: conversations.map((c) => c.id).toList(),
     ).listen(_handleIncomingMessage);
+
+    // Heartbeat keeps presence "online" while the tab is open.
+    unawaited(b.heartbeat());
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(
+      const Duration(seconds: 60),
+      (_) => unawaited(b.heartbeat()),
+    );
   }
 
   void finishOnboarding() {
@@ -169,6 +178,7 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _messagesSub?.cancel();
+    _heartbeatTimer?.cancel();
     super.dispose();
   }
 

@@ -26,6 +26,7 @@ class Composer extends StatefulWidget {
   final void Function(String text) onSend;
   final SlashHandler? onSlashCommand;
   final void Function(AttachmentKind kind)? onAttach;
+  final VoidCallback? onTyping;
   final String hint;
 
   const Composer({
@@ -33,6 +34,7 @@ class Composer extends StatefulWidget {
     required this.onSend,
     this.onSlashCommand,
     this.onAttach,
+    this.onTyping,
     this.hint = 'message',
   });
 
@@ -45,6 +47,8 @@ class _ComposerState extends State<Composer> {
   final FocusNode _focus = FocusNode();
   bool _hasText = false;
 
+  DateTime _lastTyping = DateTime.fromMillisecondsSinceEpoch(0);
+
   @override
   void initState() {
     super.initState();
@@ -53,6 +57,14 @@ class _ComposerState extends State<Composer> {
       if (has != _hasText) setState(() => _hasText = has);
       // For slash menu visibility — just rebuild.
       setState(() {});
+      // Throttle typing pings to ~once every 2s.
+      if (has && widget.onTyping != null) {
+        final now = DateTime.now();
+        if (now.difference(_lastTyping) > const Duration(seconds: 2)) {
+          _lastTyping = now;
+          widget.onTyping!();
+        }
+      }
     });
   }
 

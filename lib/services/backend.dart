@@ -26,6 +26,16 @@ abstract class Backend {
   Future<bool> isOnboarded();
   Future<void> markOnboarded();
 
+  /// Heartbeat — bumps profile.last_seen_at. Drives presence inference.
+  Future<void> heartbeat();
+
+  /// Broadcast that the current user is typing in [conversationId].
+  Future<void> broadcastTyping(String conversationId);
+
+  /// Listen for "user is typing" broadcasts from other participants.
+  /// Emits the set of currently-typing userIds (excluding self).
+  Stream<Set<String>> subscribeTyping(String conversationId);
+
   // ── Conversations ─────────────────────────────────────────────────────────
   Future<List<Conversation>> listConversations();
   Future<Conversation> createOneOnOne(String otherUserId);
@@ -52,4 +62,19 @@ abstract class Backend {
   });
   Future<void> togglePin(String messageId, bool pinned);
   Future<void> toggleReaction(String messageId, Reaction reaction);
+
+  // ── Uploads ──────────────────────────────────────────────────────────────
+  /// Uploads bytes to the `avatars` bucket under the current user's prefix.
+  /// Returns a public URL. Pass [filename] to control the storage path.
+  Future<String> uploadAvatar(List<int> bytes, {required String filename});
+
+  /// Uploads bytes to the `attachments` bucket under the user's prefix.
+  /// Returns a signed URL (since the bucket is private). [conversationId]
+  /// scopes the storage path so policies can enforce membership later.
+  Future<String> uploadAttachment(
+    List<int> bytes, {
+    required String conversationId,
+    required String filename,
+    required String mimeType,
+  });
 }

@@ -1,9 +1,14 @@
+import 'dart:async';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../models/conversation.dart';
 import '../models/message.dart';
 import '../models/user.dart';
+import '../services/backend.dart';
 import '../state/app_state.dart';
 import '../theme/colors.dart';
 import '../widgets/attachment_sheet.dart';
@@ -24,6 +29,8 @@ class ChatDetailScreen extends StatefulWidget {
 class _ChatDetailScreenState extends State<ChatDetailScreen> {
   final ScrollController _scroll = ScrollController();
   Message? _replyTo;
+  Set<String> _typingUserIds = const {};
+  StreamSubscription<Set<String>>? _typingSub;
 
   @override
   void initState() {
@@ -39,7 +46,21 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       }
       app.markRead(widget.conversationId);
       WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
+
+      final backend = context.read<Backend?>();
+      if (backend != null) {
+        _typingSub = backend
+            .subscribeTyping(widget.conversationId)
+            .listen((ids) => setState(() => _typingUserIds = ids));
+      }
     });
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    _typingSub?.cancel();
+    super.dispose();
   }
 
   void _autoSummary(AppState app, Conversation convo) {
@@ -120,12 +141,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   @override
-  void dispose() {
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final theme = Theme.of(context);
@@ -144,11 +159,23 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         ? (convo.groupAvatarId ?? other.avatarId)
         : other.avatarId;
 
-    final subtitle = convo.isGroup
-        ? '${convo.participantIds.where((id) => id != app.pulse.id).length} people · pulse is here'
-        : (other.presence == Presence.online
-            ? 'online'
-            : (other.status ?? ''));
+    String subtitle;
+    if (_typingUserIds.isNotEmpty) {
+      final names = _typingUserIds
+          .take(2)
+          .map((id) => app.userById(id).name.split(' ').first)
+          .join(', ');
+      subtitle = _typingUserIds.length == 1
+          ? '$names is typing…'
+          : '$names are typing…';
+    } else if (convo.isGroup) {
+      subtitle =
+          '${convo.participantIds.where((id) => id != app.pulse.id).length} people · pulse is here';
+    } else {
+      subtitle = other.presence == Presence.online
+          ? 'online'
+          : (other.status ?? '');
+    }
 
     final pinnedCount = convo.messages.where((m) => m.pinned).length;
 
@@ -301,6 +328,12 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             },
             onSlashCommand: (cmd) => _handleSlash(context, convo, cmd),
             onAttach: (kind) => _handleAttach(context, convo, kind),
+            onTyping: () {
+              final backend = context.read<Backend?>();
+              if (backend != null) {
+                unawaited(backend.broadcastTyping(convo.id));
+              }
+            },
             hint: convo.isGroup
                 ? 'message ${convo.groupName ?? "group"}'
                 : 'message $title',
@@ -310,19 +343,59 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     );
   }
 
-  void _handleAttach(
-      BuildContext context, Conversation convo, AttachmentKind kind) {
+  Future<void> _handleAttach(
+      BuildContext context, Conversation convo, AttachmentKind kind) async {
     final app = context.read<AppState>();
+    final backend = context.read<Backend?>();
     String preview;
     switch (kind) {
       case AttachmentKind.photo:
-        preview = '📷 Sent a photo';
-        break;
       case AttachmentKind.camera:
-        preview = '📸 Sent a snap from camera';
+        final picker = ImagePicker();
+        final XFile? picked = await picker.pickImage(
+          source: kind == AttachmentKind.camera
+              ? ImageSource.camera
+              : ImageSource.gallery,
+          imageQuality: 85,
+          maxWidth: 1600,
+        );
+        if (picked == null) return;
+        final bytes = await picked.readAsBytes();
+        if (backend != null) {
+          try {
+            final url = await backend.uploadAttachment(
+              bytes,
+              conversationId: convo.id,
+              filename: picked.name,
+              mimeType: picked.mimeType ?? 'image/jpeg',
+            );
+            preview = '📷 Sent a photo\n$url';
+          } catch (e) {
+            preview = '📷 (failed to upload) ${picked.name}';
+          }
+        } else {
+          preview = '📷 Sent a photo · ${picked.name}';
+        }
         break;
       case AttachmentKind.file:
-        preview = '📄 Sent a file · requirements.pdf · 2.3 MB';
+        final result = await FilePicker.pickFiles(withData: true);
+        if (result == null || result.files.isEmpty) return;
+        final f = result.files.single;
+        if (backend != null && f.bytes != null) {
+          try {
+            final url = await backend.uploadAttachment(
+              f.bytes!,
+              conversationId: convo.id,
+              filename: f.name,
+              mimeType: 'application/octet-stream',
+            );
+            preview = '📄 ${f.name} · ${_formatBytes(f.size)}\n$url';
+          } catch (e) {
+            preview = '📄 (failed to upload) ${f.name}';
+          }
+        } else {
+          preview = '📄 ${f.name} · ${_formatBytes(f.size)}';
+        }
         break;
       case AttachmentKind.location:
         preview = '📍 Shared a location · current spot';
@@ -331,13 +404,19 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         preview = '🗳 Started a poll · "thai or pizza?"';
         break;
       case AttachmentKind.voice:
-        // Voice runs through VoiceOverlay; this branch is unused.
         preview = '🎙 Sent a voice note';
         break;
     }
-    app.sendMessage(convo.id, preview);
+    await app.sendMessage(convo.id, preview);
+    if (!mounted) return;
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _animateToBottom());
+  }
+
+  String _formatBytes(int n) {
+    if (n < 1024) return '$n B';
+    if (n < 1024 * 1024) return '${(n / 1024).toStringAsFixed(1)} KB';
+    return '${(n / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
   void _handleSend(BuildContext context, Conversation convo, String text) {

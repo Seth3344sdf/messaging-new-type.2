@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'dart:typed_data';
+
 import 'package:supabase_flutter/supabase_flutter.dart' hide Presence;
 
 import '../models/conversation.dart';
@@ -82,6 +84,71 @@ class SupabaseBackend implements Backend {
     final uid = _client.auth.currentUser?.id;
     if (uid == null) return;
     await _client.from('profiles').update({'onboarded': true}).eq('id', uid);
+  }
+
+  @override
+  Future<void> heartbeat() async {
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return;
+    await _client
+        .from('profiles')
+        .update({'last_seen_at': DateTime.now().toUtc().toIso8601String()})
+        .eq('id', uid);
+  }
+
+  // ── Typing ───────────────────────────────────────────────────────────────
+  final Map<String, RealtimeChannel> _typingChannels = {};
+
+  @override
+  Future<void> broadcastTyping(String conversationId) async {
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return;
+    final channel = _typingChannels.putIfAbsent(
+      conversationId,
+      () => _client.channel(
+        'typing:$conversationId',
+        opts: const RealtimeChannelConfig(self: false),
+      )..subscribe(),
+    );
+    await channel.sendBroadcastMessage(
+      event: 'typing',
+      payload: {'user_id': uid, 'at': DateTime.now().millisecondsSinceEpoch},
+    );
+  }
+
+  @override
+  Stream<Set<String>> subscribeTyping(String conversationId) {
+    final controller = StreamController<Set<String>>();
+    final activity = <String, DateTime>{};
+    Set<String> snapshot() => activity.entries
+        .where((e) =>
+            DateTime.now().difference(e.value) < const Duration(seconds: 4))
+        .map((e) => e.key)
+        .toSet();
+    Timer? pruneTimer;
+    void emit() => controller.add(snapshot());
+    final channel = _client
+        .channel('typing:$conversationId')
+        .onBroadcast(
+          event: 'typing',
+          callback: (payload) {
+            final uid = payload['user_id'] as String?;
+            if (uid == null) return;
+            if (uid == _client.auth.currentUser?.id) return;
+            activity[uid] = DateTime.now();
+            emit();
+          },
+        )
+        .subscribe();
+    pruneTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => emit(),
+    );
+    controller.onCancel = () {
+      pruneTimer?.cancel();
+      _client.removeChannel(channel);
+    };
+    return controller.stream;
   }
 
   @override
@@ -375,6 +442,43 @@ class SupabaseBackend implements Backend {
         'kind': kind,
       });
     }
+  }
+
+  // ── Uploads ───────────────────────────────────────────────────────────────
+  @override
+  Future<String> uploadAvatar(List<int> bytes, {required String filename}) async {
+    final uid = _requireUid();
+    final path = '$uid/$filename';
+    await _client.storage.from('avatars').uploadBinary(
+          path,
+          Uint8List.fromList(bytes),
+          fileOptions: const FileOptions(upsert: true),
+        );
+    final url = _client.storage.from('avatars').getPublicUrl(path);
+    // Persist on the profile so other clients can render it.
+    await _client.from('profiles').update({'avatar_url': url}).eq('id', uid);
+    return url;
+  }
+
+  @override
+  Future<String> uploadAttachment(
+    List<int> bytes, {
+    required String conversationId,
+    required String filename,
+    required String mimeType,
+  }) async {
+    final uid = _requireUid();
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final path = '$uid/$conversationId/$ts-$filename';
+    await _client.storage.from('attachments').uploadBinary(
+          path,
+          Uint8List.fromList(bytes),
+          fileOptions: FileOptions(contentType: mimeType, upsert: false),
+        );
+    final signed = await _client.storage
+        .from('attachments')
+        .createSignedUrl(path, 60 * 60 * 24 * 7); // 7 days
+    return signed;
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

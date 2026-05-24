@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../data/avatar_library.dart';
+import '../services/backend.dart';
 import '../state/app_state.dart';
 import '../theme/colors.dart';
 import '../widgets/avatar.dart';
@@ -124,7 +126,21 @@ class _AvatarPickerScreenState extends State<AvatarPickerScreen> {
               );
             }).toList(),
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
+          OutlinedButton.icon(
+            onPressed: _uploadPhoto,
+            icon: const Icon(Icons.upload_rounded, size: 18),
+            label: const Text('Upload a photo instead'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppPalette.brand,
+              side: const BorderSide(color: AppPalette.brand),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
           Row(
             children: [
               TextButton(
@@ -149,6 +165,39 @@ class _AvatarPickerScreenState extends State<AvatarPickerScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _uploadPhoto() async {
+    final backend = context.read<Backend?>();
+    if (backend == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Photo upload needs the live backend.'),
+        ),
+      );
+      return;
+    }
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+      maxWidth: 800,
+    );
+    if (picked == null || !mounted) return;
+    try {
+      final bytes = await picked.readAsBytes();
+      await backend.uploadAvatar(bytes, filename: picked.name);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Avatar updated.')),
+      );
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Upload failed: $e')),
+      );
+    }
   }
 
   Widget _label(BuildContext context, String t) {
