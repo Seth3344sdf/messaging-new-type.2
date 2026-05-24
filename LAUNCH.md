@@ -2,6 +2,25 @@
 
 Everything you need to ship this app on iOS and on the web.
 
+## Status at a glance
+
+| Block | State |
+|---|---|
+| Schema applied to live Supabase | ✅ migrations 0001/0002/0003 |
+| Auth (magic link) | ✅ wired, working end-to-end |
+| Onboarding (name → status → avatar) | ✅ |
+| Live conversations + messages | ✅ AppState consumes Backend |
+| Realtime message inserts | ✅ single channel, fan-out client-side |
+| Typing indicators | ✅ Realtime broadcast |
+| Presence (online / idle / offline) | ✅ inferred from last_seen heartbeat |
+| Workspaces (multi-tenant) | ✅ schema + default seed trigger |
+| Avatar + attachment uploads | ✅ Supabase Storage, per-user RLS |
+| Sentry error monitoring | ✅ off-by-default; set SENTRY_DSN to enable |
+| Landing page | ✅ `/landing` Next.js project, deploys to Vercel |
+| Push notifications (APNs / Web Push) | ❌ deferred — see BACKEND.md "Push" |
+| E2EE (MLS) | ❌ phase 2 — see SECURITY.md |
+| iOS / macOS / Windows build environments | needs full Xcode + CocoaPods |
+
 ## Accounts to create
 
 | Account | What for | Cost |
